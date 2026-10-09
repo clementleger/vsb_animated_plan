@@ -76,15 +76,7 @@ void drawLine(Line *line, bool active) {
   drawStation(line->lastLed);
 }
 
-void drawFullMap() {
-  strip.clear();
-
-  // Draw every route as a dim white idle line.
-  for (size_t lineIndex = 0; lineIndex < LINE_COUNT; ++lineIndex) {
-    drawLine(&lines[lineIndex], false);
-  }
-
-  const uint16_t lastLed = lines[LINE_COUNT - 1].lastLed;
+void drawTrain(uint16_t startLed, uint16_t lastLed) {
   for (uint8_t offset = 0; offset < TRAIN_LENGTH && offset <= movingPosition;
        ++offset) {
     const uint16_t trainLed = movingPosition - offset;
@@ -95,8 +87,19 @@ void drawFullMap() {
 
   movingPosition++;
   if (movingPosition > lastLed + TRAIN_LENGTH - 1) {
-    movingPosition = lines[0].firstLed;
+    movingPosition = startLed;
   }
+}
+
+void drawFullMap() {
+  strip.clear();
+
+  // Draw every route as a dim white idle line.
+  for (size_t lineIndex = 0; lineIndex < LINE_COUNT; ++lineIndex) {
+    drawLine(&lines[lineIndex], false);
+  }
+
+  drawTrain(lines[0].firstLed, lines[LINE_COUNT - 1].lastLed);
   strip.show();
 }
 
