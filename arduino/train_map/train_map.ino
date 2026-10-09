@@ -6,11 +6,11 @@ constexpr uint8_t LED_DATA_PIN = 6;
 constexpr uint8_t NEXT_BUTTON_PIN = 2;
 
 constexpr uint8_t LED_BRIGHTNESS = 80;
-constexpr uint16_t FRAME_DELAY_MS = 100;
+constexpr uint16_t FRAME_DELAY_MS = 150;
 constexpr uint8_t STATION_RED = 255;
-constexpr uint8_t IDLE_LINE_LEVEL = 15;
+constexpr uint8_t IDLE_LINE_LEVEL = 50;
 constexpr uint8_t MOVING_LIGHT_LEVEL = 255;
-constexpr uint8_t MOVING_LIGHT_TRAIL = 90;
+constexpr uint8_t TRAIN_LENGTH = 4; // Number of LEDs in the moving train.
 
 Adafruit_NeoPixel strip(LED_COUNT, LED_DATA_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -21,6 +21,7 @@ Adafruit_NeoPixel strip(LED_COUNT, LED_DATA_PIN, NEO_GRB + NEO_KHZ800);
  */
 struct Station {
   uint16_t led;
+  const char *name;
 };
 
 /*
@@ -31,27 +32,17 @@ struct Station {
 struct Line {
   uint16_t firstLed;
   uint16_t lastLed;
-  bool reverse;
+  uint32_t seconds;
 };
 
-// Replace these example values with the LED coordinates from the map.
-const Station stations[] = {
-  {5},   // Station A
-  {28},  // Station B
-  {54},  // Station C
-  {83},  // Station D
-  {112}  // Station E
-};
-
-// Routes are shown in this order when the button is pressed.
+// Routes are shown in this order during the timed sequence.
 const Line lines[] = {
-  {5, 28, false},   // A -> B
-  {28, 54, false},  // B -> C
-  {54, 83, false},  // C -> D
-  {83, 112, false}  // D -> E
+    {0, 30, 20},  // A -> B, seconds
+    {30, 51, 20}, // B -> C, seconds
+    {51, 76, 20}, // C -> D, seconds
+    {76, 83, 20}  // D -> E, seconds
 };
 
-constexpr size_t STATION_COUNT = sizeof(stations) / sizeof(stations[0]);
 constexpr size_t LINE_COUNT = sizeof(lines) / sizeof(lines[0]);
 
 size_t currentLine = 0;
@@ -63,73 +54,50 @@ bool stableButtonState = HIGH;
 uint32_t buttonChangedAt = 0;
 constexpr uint16_t BUTTON_DEBOUNCE_MS = 35;
 
-uint32_t scaledWhite(uint8_t level) {
-  return strip.Color(level, level, level);
-}
-uint32_t trainColor() {
-  return strip.Color(0, 0, 255);
+uint32_t scaledWhite(uint8_t level) { return strip.Color(level, level, level); }
+uint32_t trainColor() { return strip.Color(255, 128, 0); }
+
+void drawStation(uint16_t led) {
+  if (led != lines[0].firstLed && led != lines[LINE_COUNT - 1].lastLed) {
+    strip.setPixelColor(led, strip.Color(STATION_RED, 0, 0));
+  }
 }
 
-bool isStation(uint16_t led) {
-  for (size_t i = 0; i < STATION_COUNT; ++i) {
-    if (stations[i].led == led) {
-      return true;
+void drawLine(Line *line, bool active) {
+  for (uint16_t led = line->firstLed; led <= line->lastLed; ++led) {
+    if (active) {
+      strip.setPixelColor(led, scaledWhite(MOVING_LIGHT_LEVEL));
+    } else {
+      strip.setPixelColor(led, scaledWhite(IDLE_LINE_LEVEL));
     }
   }
-  return false;
+
+  drawStation(line->firstLed);
+  drawStation(line->lastLed);
 }
 
-void drawMap() {
+void drawFullMap() {
   strip.clear();
 
   // Draw every route as a dim white idle line.
   for (size_t lineIndex = 0; lineIndex < LINE_COUNT; ++lineIndex) {
-    if (lineIndex == currentLine) {
-      continue;
-    }
-    const Line &line = lines[lineIndex];
-    for (uint16_t led = line.firstLed; led <= line.lastLed; ++led) {
-      if (!isStation(led)) {
-        strip.setPixelColor(led, scaledWhite(IDLE_LINE_LEVEL));
-      }
-    }
+    drawLine(&lines[lineIndex], false);
   }
 
-  // Add a bright-to-dim moving highlight to the selected route.
-  const Line &line = lines[currentLine];
-  const uint16_t length = line.lastLed - line.firstLed + 1;
-  const uint16_t head = line.reverse
-      ? line.lastLed - movingPosition
-      : line.firstLed + movingPosition;
-
-  if (!isStation(head)) {
-    strip.setPixelColor(head, trainColor());
-  }
-
-  if (movingPosition > 0) {
-    const uint16_t previous = line.reverse ? head + 1 : head - 1;
-    if (previous >= line.firstLed && previous <= line.lastLed &&
-        !isStation(previous)) {
-      strip.setPixelColor(previous, trainColor());
+  const uint16_t lastLed = lines[LINE_COUNT - 1].lastLed;
+  for (uint8_t offset = 0; offset < TRAIN_LENGTH && offset <= movingPosition;
+       ++offset) {
+    const uint16_t trainLed = movingPosition - offset;
+    if (trainLed <= lastLed) {
+      strip.setPixelColor(trainLed, trainColor());
     }
   }
 
-  // Stations are always red and take priority over route pixels.
-  for (size_t i = 0; i < STATION_COUNT; ++i) {
-    strip.setPixelColor(stations[i].led, strip.Color(STATION_RED, 0, 0));
+  movingPosition++;
+  if (movingPosition > lastLed + TRAIN_LENGTH - 1) {
+    movingPosition = lines[0].firstLed;
   }
-
   strip.show();
-
-  ++movingPosition;
-  if (movingPosition >= length) {
-    movingPosition = 0;
-  }
-}
-
-void advanceLine() {
-  currentLine = (currentLine + 1) % LINE_COUNT;
-  movingPosition = 0;
 }
 
 void readButton() {
@@ -145,7 +113,7 @@ void readButton() {
     stableButtonState = reading;
     // The button is wired between the pin and ground.
     if (stableButtonState == LOW) {
-      advanceLine();
+      //       startSequence();
     }
   }
 }
@@ -160,9 +128,10 @@ void setup() {
 
 void loop() {
   readButton();
+  //   updateSequence();
 
   if (millis() - lastFrameAt >= FRAME_DELAY_MS) {
     lastFrameAt = millis();
-    drawMap();
+    drawFullMap();
   }
 }
