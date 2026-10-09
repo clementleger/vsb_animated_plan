@@ -7,6 +7,7 @@ constexpr uint8_t NEXT_BUTTON_PIN = 2;
 
 constexpr uint8_t LED_BRIGHTNESS = 80;
 constexpr uint16_t FRAME_DELAY_MS = 150;
+constexpr uint32_t SEQUENCE_START_DELAY_S = 92;
 constexpr uint8_t STATION_RED = 255;
 constexpr uint8_t IDLE_LINE_LEVEL = 50;
 constexpr uint8_t MOVING_LIGHT_LEVEL = 255;
@@ -37,10 +38,10 @@ struct Line {
 
 // Routes are shown in this order during the timed sequence.
 const Line lines[] = {
-    {0, 30, 20},  // A -> B, seconds
-    {30, 51, 20}, // B -> C, seconds
-    {51, 76, 20}, // C -> D, seconds
-    {76, 83, 20}  // D -> E, seconds
+    {0, 30, 66},  // A -> B, seconds
+    {30, 51, 32}, // B -> C, seconds
+    {51, 76, 67}, // C -> D, seconds
+    {76, 83, 0}  // D -> E, seconds
 };
 
 constexpr size_t LINE_COUNT = sizeof(lines) / sizeof(lines[0]);
@@ -48,6 +49,10 @@ constexpr size_t LINE_COUNT = sizeof(lines) / sizeof(lines[0]);
 size_t currentLine = 0;
 uint16_t movingPosition = 0;
 uint32_t lastFrameAt = 0;
+uint32_t currentLineStartedAt = 0;
+uint32_t sequenceStartRequestedAt = 0;
+bool sequenceMode = false;
+bool sequenceStartPending = false;
 
 bool lastButtonReading = HIGH;
 bool stableButtonState = HIGH;
@@ -80,7 +85,7 @@ void drawTrain(uint16_t startLed, uint16_t lastLed) {
   for (uint8_t offset = 0; offset < TRAIN_LENGTH && offset <= movingPosition;
        ++offset) {
     const uint16_t trainLed = movingPosition - offset;
-    if (trainLed <= lastLed) {
+    if (trainLed >= startLed && trainLed <= lastLed) {
       strip.setPixelColor(trainLed, trainColor());
     }
   }
@@ -103,6 +108,58 @@ void drawFullMap() {
   strip.show();
 }
 
+void drawSequenceLine() {
+  strip.clear();
+  const Line &line = lines[currentLine];
+  drawLine(&lines[currentLine], true);
+  drawTrain(line.firstLed, line.lastLed - 1);
+  for (size_t lineIndex = 0; lineIndex < LINE_COUNT; ++lineIndex) {
+    if (lineIndex != currentLine) {
+      drawLine(&lines[lineIndex], false);
+    }
+  }
+  strip.show();
+}
+
+void startSequence() {
+  sequenceMode = false;
+  sequenceStartPending = true;
+  sequenceStartRequestedAt = millis();
+}
+
+void updateSequence() {
+  if (sequenceStartPending) {
+    if (millis() - sequenceStartRequestedAt < SEQUENCE_START_DELAY_S * 1000UL) {
+      return;
+    }
+
+    currentLine = 0;
+    movingPosition = lines[currentLine].firstLed;
+    currentLineStartedAt = millis();
+    sequenceStartPending = false;
+    sequenceMode = true;
+    return;
+  }
+
+  if (!sequenceMode) {
+    return;
+  }
+
+  if (millis() - currentLineStartedAt < lines[currentLine].seconds * 1000UL) {
+    return;
+  }
+
+  if (currentLine + 1 >= LINE_COUNT) {
+    sequenceMode = false;
+    movingPosition = lines[0].firstLed;
+    return;
+  }
+
+  ++currentLine;
+  movingPosition = lines[currentLine].firstLed;
+  currentLineStartedAt = millis();
+}
+
 void readButton() {
   const bool reading = digitalRead(NEXT_BUTTON_PIN);
 
@@ -116,7 +173,7 @@ void readButton() {
     stableButtonState = reading;
     // The button is wired between the pin and ground.
     if (stableButtonState == LOW) {
-      //       startSequence();
+      startSequence();
     }
   }
 }
@@ -131,10 +188,14 @@ void setup() {
 
 void loop() {
   readButton();
-  //   updateSequence();
+  updateSequence();
 
   if (millis() - lastFrameAt >= FRAME_DELAY_MS) {
     lastFrameAt = millis();
-    drawFullMap();
+    if (sequenceMode) {
+      drawSequenceLine();
+    } else {
+      drawFullMap();
+    }
   }
 }
